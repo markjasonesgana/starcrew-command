@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Starcrew Command</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header class="bar">
+    <div class="brand">
+      <canvas id="logo" width="48" height="48" aria-hidden="true"></canvas>
+      <div>
+        <div class="eyebrow">Your AI crew · running on this PC</div>
+        <h1>STARCREW <span>COMMAND</span></h1>
+      </div>
+    </div>
+    <div class="bar-right">
+      <button class="spend" id="spend" type="button" title="Usage today">
+        <span class="eyebrow" id="usageLabel">Usage today</span>
+        <b id="spendVal" class="num">$0.00</b><span id="spendCap" class="num">of $5.00</span>
+        <div class="meter"><i id="spendBar"></i></div>
+      </button>
+      <button class="btn" id="playbooksBtn" type="button" title="Saved and scheduled missions">Playbooks</button>
+      <button class="btn" id="insightsBtn" type="button" title="How the crew is doing">Insights</button>
+      <button class="btn" id="filesBtn" type="button">Files</button>
+      <button class="btn" id="settingsBtn" type="button">Settings</button>
+      <button class="btn danger" id="stopBtn" type="button" title="Stop every task, command and browser right now">Stop all</button>
+    </div>
+  </header>
+  <div class="killed-banner" id="killedBanner" hidden>All crew activity is stopped. <button class="btn" id="resumeBtn" type="button">Resume</button></div>
+
+  <main class="layout">
+    <section class="deck">
+      <div class="card">
+        <div class="office-head">
+          <h2>Starcrew HQ</h2>
+          <div class="radio" id="radio">
+            <button class="btn ghost small" id="musicBtn" type="button" aria-expanded="false" aria-controls="musicPanel" title="Background music">♫ Music</button>
+            <div class="music-panel" id="musicPanel" hidden></div>
+          </div>
+          <button class="btn ghost small" id="soundBtn" type="button" aria-pressed="false" title="Sound effects">♪ Off</button>
+          <div class="roster" id="roster" aria-label="Crew"></div>
+        </div>
+        <div class="stage"><canvas id="office" aria-label="The office. Click a crew member to see their card."></canvas><div class="overlay" id="overlay"></div></div>
+      </div>
+
+      <form class="composer card" id="composer">
+        <label for="goal" class="eyebrow">New mission for Captain Cortex</label>
+        <textarea id="goal" rows="2" maxlength="6000" placeholder="e.g. Research three budget mechanical keyboards and write me a one-page comparison"></textarea>
+        <div class="row">
+          <span class="hint">Cortex drafts a plan with a cost and time estimate. Nothing starts until you approve it.</span>
+          <button class="btn primary" type="submit" id="draftBtn">Draft plan</button>
+        </div>
+      </form>
+
+      <div class="card">
+        <div class="card-head"><h2>Missions</h2><span class="hint" id="missionCount"></span></div>
+        <ol id="missionList" class="mission-list"></ol>
+      </div>
+    </section>
+
+    <aside class="side" aria-label="Details">
+      <nav class="tabs" role="tablist">
+        <button type="button" role="tab" data-tab="agent" aria-selected="true">Crew member</button>
+        <button type="button" role="tab" data-tab="approvals" aria-selected="false">Approvals<b id="apCount" class="badge" hidden>0</b></button>
+        <button type="button" role="tab" data-tab="activity" aria-selected="false">Activity</button>
+        <button type="button" role="tab" data-tab="commands" aria-selected="false">Commands</button>
+      </nav>
+      <section id="tab-agent" class="tabpanel" role="tabpanel"></section>
+      <section id="tab-approvals" class="tabpanel" role="tabpanel" hidden></section>
+      <section id="tab-activity" class="tabpanel" role="tabpanel" hidden><ol class="activity" id="activityList"></ol></section>
+      <section id="tab-commands" class="tabpanel cmds" role="tabpanel" hidden></section>
+    </aside>
+  </main>
+
+  <dialog id="missionDlg" aria-label="Mission"></dialog>
+  <dialog id="settingsDlg" aria-label="Settings"></dialog>
+  <dialog id="filesDlg" aria-label="Files"></dialog>
+  <dialog id="newAgentDlg" aria-label="New crew member"></dialog>
+  <dialog id="setupDlg" aria-label="Set up Starcrew"></dialog>
+  <dialog id="playbooksDlg" aria-label="Playbooks"></dialog>
+  <dialog id="insightsDlg" aria-label="Insights"></dialog>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <script src="starcrew-sprites.js"></script>
+  <script src="music.js"></script>
+  <script src="office.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
