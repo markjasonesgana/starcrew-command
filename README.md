@@ -154,8 +154,8 @@ a 👍 gives XP and a 👎 tells the coach what to work on. Lessons show who tau
 | run_command | PowerShell command in the workspace | **always asks you** |
 | connector tools | tools from your MCP connectors | **ask you** (configurable) |
 
-Permission modes per crew member: **Careful**, **Balanced** (default), **Autopilot** (never asks; only for
-crew you trust) or **Read-only**.
+Permission modes per crew member: **Careful**, **Balanced** (default), **Autopilot** (clicks, typing and opening apps run
+without asking; terminal commands and crew changes still always ask) or **Read-only**.
 
 ## Safety
 

@@ -207,6 +207,9 @@
     function applyLive(a, live) {
       const st = (live && live.state) || 'idle';
       a.detail = (live && live.detail) || '';
+      const since = live && live.since;
+      if (since && since === a.liveSince && ['done', 'error'].includes(st)) return; // already celebrated this one
+      a.liveSince = since;
       if (live && live.huddle && ['idle', 'thinking', 'working', 'waiting', 'browsing'].includes(st)) {
         const h = HUDDLE[live.huddle.side] || HUDDLE.left;
         if (a.state !== 'huddle') {
@@ -508,6 +511,7 @@
           const free = a.kind === 'pet' || a.state === 'idle' || a.state === 'done';
           if (!free) { if (id !== 'all') { a.flash = { text: `${a.name}: After this task, I promise!`, until: now + 3, cls: 'say' }; a.hopAt = now; } continue; }
           if (a.action === 'sleep') { a.napping = false; release(a); }
+          if (a.state === 'done' || a.state === 'error') a.state = 'idle';
           n++;
           // a party spreads everyone across the dance floor in two rows; a solo dancer picks any spot
           const p = id === 'all' ? { x: Math.round(212 + ((n * 37) % 104)), y: n % 2 ? 150 : 170 } : spot('rug'); a.hold = 0; a.afterHold = null;

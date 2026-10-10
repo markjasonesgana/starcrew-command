@@ -246,10 +246,11 @@
         if (ctx.state !== 'running') return false;
         api.play(); return true;
       },
-      select(i) { pick(i); if (playing) { fadeTo(0.0001, 0.25); setTimeout(() => { fadeTo(vol, 0.6); startTrack(); }, 260); } else api.play(); },
+      // stop scheduling the old track right away, so the new one does not start twice
+      select(i) { clearInterval(timer); timer = null; pick(i); if (playing) { fadeTo(0.0001, 0.25); setTimeout(() => { if (playing) { fadeTo(vol, 0.6); startTrack(); } }, 260); } else api.play(); },
       next() { api.select(shuffle ? randomOther() : track + 1); },
       prev() { if (playing && step / 16 > 2) api.select(track); else api.select(track - 1); },
-      setVolume(v) { vol = Math.max(0, Math.min(1, Number(v) || 0)); if (playing) fadeTo(vol, 0.1); emit('change', state()); },
+      setVolume(v) { vol = Math.max(0, Math.min(1, Number(v) || 0)); if (playing) fadeTo(vol, 0.1); emit('volume', state()); },
       setShuffle(on) { shuffle = !!on; emit('change', state()); },
       setRepeat(mode) { repeat = ['all', 'one', 'off'].includes(mode) ? mode : 'all'; emit('change', state()); },
       restore(s) { if (!s) return; if (s.volume != null) vol = Math.max(0, Math.min(1, s.volume)); if (s.track != null) track = Math.max(0, Math.min(TRACKS.length - 1, s.track | 0)); shuffle = !!s.shuffle; if (['all', 'one', 'off'].includes(s.repeat)) repeat = s.repeat; },

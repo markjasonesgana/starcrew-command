@@ -46,7 +46,7 @@
   const MODE_INFO = {
     careful: 'Asks before anything beyond reading files.',
     balanced: 'Reads the web and writes workspace files on its own; asks before commands, clicks, typing and opening apps.',
-    autopilot: 'Never asks. Blocked actions stay blocked. Use only for crew you trust with this computer.',
+    autopilot: 'Clicks, typing and opening apps run without asking. Commands and crew changes still always ask; blocked actions stay blocked. Use only for crew you trust with this computer.',
     readonly: 'Can only read. Writing, commands and browsing are refused.',
   };
   const TOOL_TITLE = {
@@ -61,16 +61,18 @@
   function md(src) {
     const esc = s => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const inline = s => {
-      const codes = [];
+      const codes = [], links = [];
       s = s.replace(/`([^`]+)`/g, (m, c) => { codes.push(c); return '\u0000' + (codes.length - 1) + '\u0000'; });
+      // pull links out first, so bold/italic never touches a URL and links never nest
+      s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (m, t, u) => { links.push([t, u]); return '\u0001' + (links.length - 1) + '\u0001'; })
+        .replace(/(^|[\s(])(https?:\/\/[^\s<)\u0000\u0001]+[^\s<).,!?:;'"\u0000\u0001])/g, (m, pre, u) => { links.push([u, u]); return pre + '\u0001' + (links.length - 1) + '\u0001'; });
       s = esc(s)
         .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
         .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
         .replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s).,!?])/g, '$1<em>$2</em>')
-        .replace(/~~([^~]+)~~/g, '<del>$1</del>')
-        .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
-        .replace(/(^|[\s(])(https?:\/\/[^\s<)]+[^\s<).,!?:;'"])/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>');
-      return s.replace(/\u0000(\d+)\u0000/g, (m, i) => '<code>' + esc(codes[+i]) + '</code>');
+        .replace(/~~([^~]+)~~/g, '<del>$1</del>');
+      return s.replace(/\u0000(\d+)\u0000/g, (m, i) => '<code>' + esc(codes[+i]) + '</code>')
+        .replace(/\u0001(\d+)\u0001/g, (m, i) => `<a href="${esc(links[+i][1])}" target="_blank" rel="noopener noreferrer">${esc(links[+i][0])}</a>`);
     };
     const cells = l => l.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
     const out = []; let list = null, code = null, lang = '';
@@ -128,6 +130,7 @@
   function drawPortraits() {
     for (const p of portraits) {
       if (!p.c.isConnected) { portraits.delete(p); continue; }
+      if (!p.c.offsetParent) continue; // hidden (closed dialog or tab): no need to draw
       const a = S.agents.find(x => x.id === p.agentId);
       const sprite = a && SC.characters[a.sprite] ? a.sprite : p.sprite;
       const g = p.c.getContext('2d'); g.clearRect(0, 0, 48, 48);
@@ -169,13 +172,16 @@
 
   // ---------- roster ----------
   function renderRoster() {
-    const r = clear($('#roster'));
+    const r = $('#roster');
+    const focused = r.contains(document.activeElement) ? document.activeElement.dataset.agent : null;
+    clear(r);
     for (const a of S.agents) {
       const st = a.enabled ? (a.live && a.live.state) || 'idle' : 'sleeping';
-      r.append(h('button', { type: 'button', class: 'chip' + (a.enabled ? '' : ' off'), 'aria-pressed': String(a.id === sel), title: `${a.name} · ${a.role} · ${STATE[st] || st}`, onclick: () => { select(a.id); office.poke(a.id); } },
+      r.append(h('button', { type: 'button', 'data-agent': a.id, class: 'chip' + (a.enabled ? '' : ' off'), 'aria-pressed': String(a.id === sel), title: `${a.name} · ${a.role} · ${STATE[st] || st}`, onclick: () => { select(a.id); office.poke(a.id); } },
         h('span', { class: 'dot ' + st }), a.name.replace(/^Captain /, '')));
     }
-    r.append(h('button', { type: 'button', class: 'chip', title: 'Add a crew member', onclick: openNewAgent }, '+ Add'));
+    r.append(h('button', { type: 'button', 'data-agent': '+', class: 'chip', title: 'Add a crew member', onclick: openNewAgent }, '+ Add'));
+    if (focused) { const b = r.querySelector(`[data-agent="${CSS.escape(focused)}"]`); if (b) b.focus({ preventScroll: true }); }
   }
 
   function select(id) {
@@ -382,8 +388,9 @@
     return new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(String(r.result).split(',')[1] || ''); r.onerror = () => reject(new Error('Could not read ' + file.name)); r.readAsDataURL(file); });
   }
   function findAgentByMention(word) {
-    const w = word.toLowerCase();
-    return S.agents.find(x => x.id === w || x.name.toLowerCase() === w || x.name.toLowerCase().replace(/^captain /, '') === w);
+    const w = word.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const keys = x => { const n = x.name.toLowerCase(); return [x.id, n.replace(/[^a-z0-9]/g, ''), n.replace(/^(captain|coach) /, '').replace(/[^a-z0-9]/g, ''), n.split(/\s+/).pop()]; };
+    return S.agents.find(x => keys(x).includes(w));
   }
 
   function subChat(a, box) {
@@ -394,7 +401,8 @@
     const jump = h('button', { type: 'button', class: 'jump', hidden: true, onclick: () => { list.scrollTop = list.scrollHeight; } }, '↓ Newest');
     const inline = h('div', { class: 'chat-approvals', id: 'chatApprovals' });
     const typing = h('div', { class: 'typing-row' }, h('span', { class: 'typing', text: `${a.name} is working on it` }), h('button', { type: 'button', class: 'btn small danger', onclick: () => api(`/agent/${a.id}/chat/stop`, {}).catch(fail) }, 'Stop'));
-    const editBar = h('div', { class: 'edit-bar' }, h('span', { text: 'Editing your last message. Sending replaces it and the answer after it.' }), h('button', { type: 'button', class: 'btn ghost small', onclick: () => { draft.editing = false; input.value = ''; draft.text = ''; sync(); } }, 'Cancel'));
+    const editBar = h('div', { class: 'edit-bar' }, h('span', { text: 'Editing your last message. Sending replaces it and the answer after it.' }), h('button', { type: 'button', class: 'btn ghost small', onclick: () => cancelEdit() }, 'Cancel'));
+    const cancelEdit = () => { draft.editing = false; draft.text = ''; draft.files = []; input.value = ''; grow(); sync(); };
     const atts = h('div', { class: 'atts pending' });
     const input = h('textarea', { rows: 1, maxlength: 12000, value: draft.text, placeholder: a.captain ? `Message ${a.name}, or describe a goal for a mission` : `Message ${a.name}`, 'aria-label': 'Message' });
     const fileIn = h('input', { type: 'file', multiple: true, hidden: true });
@@ -414,7 +422,7 @@
         if (file.size > 25 * 1024 * 1024) { toast(`${file.name} is over 25 MB.`); continue; }
         const tmp = { path: 'uploads/…/' + file.name, uploading: true }; draft.files.push(tmp); sync();
         try { const r = await api('/upload', { name: file.name, data: await readFileB64(file) }); tmp.path = r.path; tmp.uploading = false; }
-        catch (e) { draft.files.splice(draft.files.indexOf(tmp), 1); fail(e); }
+        catch (e) { const i = draft.files.indexOf(tmp); if (i >= 0) draft.files.splice(i, 1); fail(e); }
         sync();
       }
     }
@@ -432,13 +440,14 @@
       const at = text.match(/^@([\w-]+)\s+([\s\S]+)/);
       if (at && mode === 'send') { const other = findAgentByMention(at[1]); if (other && other.id !== a.id) { target = other; text = at[2]; } }
       const files = draft.files.map(f => f.path);
+      const typed = input.value, keptFiles = draft.files.slice(), wasEditing = draft.editing;
       const m = draft.editing ? 'edit' : mode;
       const t = chatOf(target.id); if (t) t.busy = true;
       input.value = ''; draft.text = ''; draft.files = []; draft.editing = false; grow(); sync();
       try {
         await api(`/agent/${target.id}/chat`, { text, attachments: files, mode: m });
         if (target !== a) { toast(`Handed to ${target.name}`); select(target.id); }
-      } catch (e) { if (t) t.busy = false; fail(e); input.value = text; draft.text = text; sync(); }
+      } catch (e) { if (t) t.busy = false; fail(e); input.value = typed; draft.text = typed; draft.files = keptFiles; draft.editing = wasEditing; grow(); sync(); }
     }
     function retry() { const t = chatOf(a.id); if (t) t.busy = true; sync(); api(`/agent/${a.id}/chat`, { mode: 'retry' }).catch(e => { if (t) t.busy = false; sync(); fail(e); }); }
     function edit() {
@@ -454,7 +463,11 @@
     function drawDraft() {
       const cc = chatOf(a.id); let el = list.querySelector('.msg-wrap.draft');
       let text = cc && cc.draft != null ? String(cc.draft) : null;
-      if (text != null) { const k = text.indexOf('<tool_call'); if (k >= 0) text = text.slice(0, k); text = text.replace(/^\s*<assistant>\s*/, ''); }
+      if (text != null) {
+        const k = text.indexOf('<tool_call'); if (k >= 0) text = text.slice(0, k);
+        const tail = text.match(/<[a-z_]*$/); if (tail && '<tool_call'.startsWith(tail[0])) text = text.slice(0, tail.index); // a tag still being typed
+        text = text.replace(/^\s*<assistant>\s*/, '');
+      }
       if (!text || !text.trim()) { if (el) el.remove(); return; }
       const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
       if (!el) { el = h('div', { class: 'msg-wrap draft' }); list.append(el); }
@@ -499,13 +512,13 @@
       draft.text = input.value; grow();
       const v = input.value;
       if (/^\/\w*$/.test(v)) { clear(pop); const opts = SLASH.filter(([c]) => c.startsWith(v)); pop.hidden = !opts.length; opts.forEach(([c, d]) => pop.append(h('button', { type: 'button', onclick: () => { input.value = c; draft.text = c; pop.hidden = true; input.focus(); if (!c.endsWith(' ')) send(); } }, h('b', { text: c.trim() }), ' ', h('span', { class: 'hint', text: d })))); }
-      else if (/^@\w*$/.test(v)) { clear(pop); const opts = S.agents.filter(x => x.id !== a.id && x.enabled && x.name.toLowerCase().replace(/^captain /, '').startsWith(v.slice(1).toLowerCase())).slice(0, 6); pop.hidden = !opts.length; opts.forEach(x => pop.append(h('button', { type: 'button', onclick: () => { input.value = '@' + x.name.replace(/^Captain /, '').replace(/\s+/g, '') + ' '; draft.text = input.value; pop.hidden = true; input.focus(); } }, portrait(x), h('b', { text: x.name }), ' ', h('span', { class: 'hint', text: x.role })))); }
+      else if (/^@\w*$/.test(v)) { clear(pop); const opts = S.agents.filter(x => x.id !== a.id && x.enabled && (q => x.name.toLowerCase().startsWith(q) || x.name.toLowerCase().replace(/^(captain|coach) /, '').startsWith(q) || x.id.startsWith(q))(v.slice(1).toLowerCase())).slice(0, 6); pop.hidden = !opts.length; opts.forEach(x => pop.append(h('button', { type: 'button', onclick: () => { input.value = '@' + x.id + ' '; draft.text = input.value; pop.hidden = true; input.focus(); } }, portrait(x), h('b', { text: x.name }), ' ', h('span', { class: 'hint', text: x.role })))); }
       else pop.hidden = true;
     });
     input.addEventListener('keydown', e => {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
       else if (e.key === 'ArrowUp' && !input.value && !busy()) { e.preventDefault(); edit(); }
-      else if (e.key === 'Escape') { pop.hidden = true; if (draft.editing) { draft.editing = false; input.value = ''; sync(); } }
+      else if (e.key === 'Escape') { pop.hidden = true; if (draft.editing) cancelEdit(); }
     });
     input.addEventListener('paste', e => { const fs = [...(e.clipboardData && e.clipboardData.files || [])]; if (fs.length) { e.preventDefault(); upload(fs); } });
     fileIn.addEventListener('change', () => { upload(fileIn.files); fileIn.value = ''; });
@@ -691,6 +704,8 @@
     if (!force && dlg.dataset.editing === m.id && m.status === 'awaiting_approval') return;
     if (m.status !== 'awaiting_approval' || force) delete dlg.dataset.editing;
     const scroll = dlg.dataset.id === m.id ? (dlg.querySelector('.dlg-body') || {}).scrollTop || 0 : 0;
+    const openSteps = dlg.dataset.id === m.id ? new Set([...dlg.querySelectorAll('details[data-step][open]')].map(d => d.dataset.step)) : new Set();
+    const closedSteps = dlg.dataset.id === m.id ? new Set([...dlg.querySelectorAll('details[data-step]:not([open])')].map(d => d.dataset.step)) : new Set();
     dlg.dataset.status = m.status; dlg.dataset.id = m.id;
     clear(dlg);
     const close = h('button', { type: 'button', class: 'btn ghost', onclick: () => dlg.close() }, 'Close');
@@ -705,6 +720,7 @@
     else if (m.status === 'running') progressView(m, body, foot);
     else if (m.status === 'interrupted') interruptedView(m, body, foot);
     else finalView(m, body, foot);
+    for (const d of body.querySelectorAll('details[data-step]')) { if (openSteps.has(d.dataset.step)) d.open = true; else if (closedSteps.has(d.dataset.step)) d.open = false; }
     body.scrollTop = scroll;
   }
 
@@ -768,7 +784,8 @@
     const draw = () => {
       clear(list);
       rows.forEach((r, i) => {
-        const agentSel = h('select', { 'aria-label': `Step ${i + 1} crew member` }, crew.map(a => h('option', { value: a.id, selected: r.agent === a.id }, `${a.name} · ${a.role}`)));
+        const owner = crew.some(a => a.id === r.agent) ? [] : [h('option', { value: r.agent, selected: true, disabled: true }, `${(agentById(r.agent) || { name: r.agent }).name} (not available: pick someone)`)];
+        const agentSel = h('select', { 'aria-label': `Step ${i + 1} crew member` }, owner, crew.map(a => h('option', { value: a.id, selected: r.agent === a.id }, `${a.name} · ${a.role}`)));
         agentSel.addEventListener('change', () => { r.agent = agentSel.value; });
         const task = h('textarea', { rows: 2, maxlength: 1500, value: r.task, 'aria-label': `Step ${i + 1} task` }); task.addEventListener('input', () => { r.task = task.value; });
         const size = h('select', { 'aria-label': 'Size' }, [['S', 'Small'], ['M', 'Medium'], ['L', 'Large']].map(([v, l]) => h('option', { value: v, selected: r.complexity === v }, l))); size.addEventListener('change', () => { r.complexity = size.value; });
@@ -789,7 +806,7 @@
     };
     draw();
     body.append(h('p', { class: 'hint', text: 'Change who does each step, what they do, and which steps must finish first. Steps that wait for nothing run at the same time. Cortex re-estimates when you save.' }), list,
-      h('button', { type: 'button', class: 'btn', disabled: rows.length >= 12, onclick: () => { rows.push({ agent: crew[0].id, task: '', complexity: 'M', after: rows.length ? [rows.length] : [] }); draw(); } }, '+ Add step'));
+      h('button', { type: 'button', class: 'btn', disabled: rows.length >= 12 || !crew.length, title: crew.length ? '' : 'Turn a crew member on duty first', onclick: () => { rows.push({ agent: crew[0].id, task: '', complexity: 'M', after: rows.length ? [rows.length] : [] }); draw(); } }, '+ Add step'));
     const close = () => { delete dlg.dataset.editing; renderMissionDlg(true); };
     dlg.append(h('div', { class: 'dlg-head' }, h('h2', { text: 'Edit plan: ' + m.title }), h('button', { type: 'button', class: 'btn ghost', onclick: close }, 'Cancel')), body,
       h('div', { class: 'dlg-foot' }, h('button', { type: 'button', class: 'btn ghost', onclick: close }, 'Cancel'),
@@ -814,7 +831,7 @@
         h('div', { class: 'top' }, h('div', { class: 'who' }, portrait(a, 32, s.status === 'running' ? 'work' : 'idle'), h('b', { text: `${i + 1}. ${a.name}` })),
           h('span', { class: 'pill ' + (s.status === 'pending' ? 'cancelled' : s.status), text: s.status === 'pending' ? 'Waiting' : s.status === 'running' ? 'Working' : STATUS[s.status] || s.status })),
         h('span', {}, s.task, waitingOn ? h('span', { class: 'hint', text: waitingOn }) : null),
-        s.output ? h('details', { open: s.status === 'failed' }, h('summary', {}, 'Result' + (s.actual ? ` · ${s.actual.requests ? s.actual.requests + ' req.' : money(s.actual.cost)} · ${dur((s.ms || 0) / 1000)}` : '')), mdEl(s.output)) : null));
+        s.output ? h('details', { open: s.status === 'failed', 'data-step': s.id }, h('summary', {}, 'Result' + (s.actual ? ` · ${s.actual.requests ? s.actual.requests + ' req.' : money(s.actual.cost)} · ${dur((s.ms || 0) / 1000)}` : '')), mdEl(s.output)) : null));
     }
   }
   function progressView(m, body, foot) {
@@ -1132,7 +1149,7 @@
           'Runs only on this computer (127.0.0.1) and opens only through a private one-time link.',
           'API keys and connector secrets stay on the server; the page and the crew\'s commands never see them.',
           'Claude and ChatGPT plans: you sign in inside the official apps. Starcrew never sees those passwords, and their own tools are switched off so only Starcrew\'s checked tools run.',
-          'Risky actions (commands, clicking, typing, opening apps, connector tools) wait for your approval unless you choose Autopilot.',
+          'Risky actions (clicking, typing, opening apps, connector tools) wait for your approval unless you choose Autopilot. Terminal commands and crew changes always ask, even on Autopilot.',
           'Dangerous commands (formatting, wiping, registry edits, download-and-run, reading passwords or keys) are always blocked.',
           'Files can only be read and written inside the workspace folder, and every mission takes an undo snapshot first.',
           'The crew cannot reach your home network or this app, and web pages are treated as untrusted data.',
@@ -1470,7 +1487,11 @@
     if (panel.hidden) return;
     clear(panel);
     const vol = h('input', { type: 'range', min: 0, max: 100, value: Math.round(s.volume * 100), 'aria-label': 'Music volume' });
-    vol.addEventListener('input', () => { radio.setVolume(vol.value / 100); savePrefs(); });
+    vol.addEventListener('input', () => {
+      radio.setVolume(vol.value / 100); savePrefs();
+      const v = radio.state().volume, lab = panel.querySelector('.m-vol');
+      if (lab) { lab.firstChild.textContent = v === 0 ? '🔇' : v < 0.4 ? '🔈' : '🔊'; lab.lastChild.textContent = Math.round(v * 100) + '%'; }
+    });
     const bar = h('div', { class: 'm-progress' }, h('i')); bar.firstChild.style.width = (s.elapsed / s.seconds * 100).toFixed(1) + '%';
     panel.append(
       h('div', { class: 'm-now' }, h('div', { class: 'eq' + (s.playing ? ' on' : '') }, h('i'), h('i'), h('i'), h('i')),

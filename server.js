@@ -44,7 +44,14 @@ function send(res, status, body, headers = {}) {
   res.writeHead(status, { ...SECURITY_HEADERS, 'cache-control': 'no-store', 'content-type': isObj ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8', ...headers });
   res.end(isObj ? JSON.stringify(body) : body);
 }
-function cookies(req) { const o = {}; for (const p of String(req.headers.cookie || '').split(';')) { const i = p.indexOf('='); if (i > 0) o[p.slice(0, i).trim()] = decodeURIComponent(p.slice(i + 1).trim()); } return o; }
+// other apps on localhost share cookies with us (browsers ignore the port), so never trust their encoding
+function cookies(req) { const o = {}; for (const p of String(req.headers.cookie || '').split(';')) { const i = p.indexOf('='); if (i > 0) { const v = p.slice(i + 1).trim(); try { o[p.slice(0, i).trim()] = decodeURIComponent(v); } catch (e) { o[p.slice(0, i).trim()] = v; } } } return o; }
+// send a file without ever crashing: it may vanish or be locked (antivirus, Excel) between the check and the read
+function streamFile(res, full, headers) {
+  const rs = fs.createReadStream(full);
+  rs.on('open', () => { res.writeHead(200, headers); rs.pipe(res); });
+  rs.on('error', () => { if (!res.headersSent) send(res, 404, 'Not found'); else res.destroy(); });
+}
 function readBody(req, limit = 1_000_000) {
   return new Promise((resolve, reject) => {
     let size = 0; const chunks = [];
@@ -163,8 +170,8 @@ route('POST', '/api/agent/:id/chat/new', (b, p) => { needAgent(p.id); crew.newTh
 route('POST', '/api/agent/:id/chat/switch', (b, p) => { needAgent(p.id); crew.switchThread(p.id, str(b.id, 40)); return chatView(p.id); });
 route('POST', '/api/agent/:id/chat/delete', (b, p) => { needAgent(p.id); if (crew.chatCtrl.has(p.id)) throw new Error('Stop the current answer first.'); crew.deleteThread(p.id, str(b.id, 40)); return chatView(p.id); });
 route('POST', '/api/agent/:id/chat/clear', (b, p) => { needAgent(p.id); if (crew.chatCtrl.has(p.id)) throw new Error('Stop the current answer first.'); const t = crew.thread(p.id); t.messages.length = 0; t.title = 'New chat'; store.save('chats'); return chatView(p.id); });
-route('POST', '/api/agent/:id/lesson/delete', (b, p) => { const a = crew.agent(p.id); a.lessons.splice(Number(b.index), 1); store.save('agents'); crew.emit('agent', crew.publicAgent(a)); return { ok: true }; });
-route('POST', '/api/agent/:id/lesson/add', (b, p) => { const a = crew.agent(p.id); crew.addLesson(a, str(b.text, 300), 'you'); return { ok: true }; });
+route('POST', '/api/agent/:id/lesson/delete', (b, p) => { const a = crew.agent(p.id); if (!a) throw new Error('No such crew member'); const i = Number(b.index); if (!Number.isInteger(i) || i < 0 || i >= (a.lessons || []).length) throw new Error('No such lesson'); a.lessons.splice(i, 1); store.save('agents'); crew.emit('agent', crew.publicAgent(a)); return { ok: true }; });
+route('POST', '/api/agent/:id/lesson/add', (b, p) => { const a = crew.agent(p.id); if (!a) throw new Error('No such crew member'); crew.addLesson(a, str(b.text, 300), 'you'); return { ok: true }; });
 route('POST', '/api/agent/:id/idea/:index/:action', (b, p) => {
   const a = crew.agent(p.id); const idea = (a.ideas || [])[Number(p.index)]; if (!idea) throw new Error('No such idea');
   a.ideas.splice(Number(p.index), 1);
@@ -308,7 +315,7 @@ route('GET', '/api/files', () => {
       if (out.length > 500) return;
       const r = rel ? rel + '/' + e.name : e.name;
       if (e.isDirectory()) { out.push({ path: r, dir: true }); if (depth < 4) walk(path.join(dir, e.name), r, depth + 1); }
-      else { const st = fs.statSync(path.join(dir, e.name)); out.push({ path: r, size: st.size, at: st.mtimeMs }); }
+      else { let st; try { st = fs.statSync(path.join(dir, e.name)); } catch (x) { continue; } out.push({ path: r, size: st.size, at: st.mtimeMs }); }
     }
   };
   walk(WORKSPACE, '', 0); return out;
@@ -340,9 +347,8 @@ route('GET', '/api/raw', (b, p, q, res) => {
   const st = fs.statSync(r.full); if (!st.isFile()) throw new Error('Not a file');
   const type = RAW_TYPES[path.extname(r.full).toLowerCase()];
   // images display inline; everything else always downloads (never runs in the page)
-  res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': type || 'application/octet-stream', 'content-length': st.size, 'cache-control': 'no-store',
+  streamFile(res, r.full, { ...SECURITY_HEADERS, 'content-type': type || 'application/octet-stream', 'content-length': st.size, 'cache-control': 'no-store',
     'content-disposition': `${type ? 'inline' : 'attachment'}; filename="${path.basename(r.full).replace(/[^\w. ()-]/g, '_')}"`, 'content-security-policy': "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox" });
-  fs.createReadStream(r.full).pipe(res);
   return RAW;
 });
 route('POST', '/api/open-workspace', () => { const cmd = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open'; spawn(cmd, [WORKSPACE], { detached: true, stdio: 'ignore' }).unref(); return { ok: true }; });
@@ -389,8 +395,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/') p = authed ? '/index.html' : '/locked.html';
     const full = path.resolve(PUBLIC, '.' + p);
     if (!full.startsWith(PUBLIC + path.sep) || !fs.existsSync(full) || fs.statSync(full).isDirectory()) return send(res, 404, 'Not found');
-    res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': TYPES[path.extname(full)] || 'application/octet-stream', 'cache-control': 'no-cache' });
-    fs.createReadStream(full).pipe(res);
+    streamFile(res, full, { ...SECURITY_HEADERS, 'content-type': TYPES[path.extname(full)] || 'application/octet-stream', 'cache-control': 'no-cache' });
   } catch (e) {
     try { send(res, 500, { error: 'Server error: ' + e.message }); } catch (x) { /* already sent */ }
   }
@@ -413,4 +418,7 @@ server.listen(PORT, HOST, () => {
   }
 });
 const shutdown = () => { try { store.flush(); } catch (e) { /* ignore */ } process.exit(0); };
+// last line of defence: log unexpected errors instead of letting one bad moment close Starcrew
+process.on('uncaughtException', e => { console.error('  ! Unexpected error (Starcrew keeps running):', e && e.stack || e); try { store.flush(); } catch (x) { /* ignore */ } });
+process.on('unhandledRejection', e => { console.error('  ! Unexpected error (Starcrew keeps running):', e && e.stack || e); });
 process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown); process.on('SIGHUP', shutdown); if (process.platform === 'win32') process.on('SIGBREAK', shutdown);

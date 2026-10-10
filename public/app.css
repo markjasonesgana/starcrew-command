@@ -406,3 +406,7 @@ td.over { color: var(--warn); }
 .tabs button { font-size: 13px; padding-left: 4px; padding-right: 4px; }
 .stage { isolation: isolate; } /* keeps office bubbles below menus */
 .music-panel { z-index: 60; }
+
+@media (max-width: 640px) {
+  .music-panel { position: fixed; left: 12px; right: 12px; top: 72px; width: auto; max-height: calc(100vh - 90px); overflow: auto; }
+}
